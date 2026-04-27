@@ -1,0 +1,67 @@
+# --- Python Virtual Environments ---
+venv/
+.venv/
+env/
+ENV/
+bin/
+include/
+lib/
+lib64/
+
+# --- Python Compiled Files ---
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+
+# --- Distribution / Packaging ---
+.Python
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Database / Local Data ---
+*.db
+*.sqlite3
+/data/
+/db/
+
+# --- Environment Variables (Secret Keys/API Keys) ---
+.env
+.env.local
+.env.dev
+.flaskenv
+.djangoenv
+
+# --- IDE/Editor Settings ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Tests / Coverage ---
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+test/
+
+# --- Docker / Cloud ---
+Dockerfile
+.dockerignore
