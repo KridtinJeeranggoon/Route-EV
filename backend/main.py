@@ -5,6 +5,9 @@ import math
 import pandas as pd
 import httpx
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI()
 
@@ -30,12 +33,13 @@ class RouteQuery(BaseModel):
 class AmenityQuery(BaseModel):
     lat: float
     lng: float
-    radius_m: int = 500  # รัศมีค้นหา amenity รอบสถานีชาร์จ (เมตร)
+    radius_m: int = 500
+
 
 # ===== Load Station CSV =====
 def load_stations_from_csv():
     # 🔧 แก้ path ให้ตรงกับไฟล์ CSV ของคุณ
-    file_path = r"C:\Users\pinkp\OneDrive\Desktop\my_project\WebApp_noey\data\station.csv"
+    file_path = r"C:\Users\pinkp\OneDrive\Desktop\my_project\WebApp_noey\data\egat-data.csv"
     try:
         df = pd.read_csv(file_path, encoding="utf-8-sig")
         df.columns = df.columns.str.strip()
@@ -47,96 +51,179 @@ def load_stations_from_csv():
 
 STATIONS_DATA = load_stations_from_csv()
 
+
 # ===== Haversine Distance =====
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(dlon / 2) ** 2
+    )
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-# ===== Overpass API: Amenity Finder =====
+
+# ===== Overpass API: Expanded Amenity Finder =====
 async def fetch_amenities(lat: float, lng: float, radius_m: int = 500):
     """
-    ดึงข้อมูล amenity จาก OpenStreetMap (Overpass API) รอบพิกัดที่กำหนด
-    ค้นหา: ห้องน้ำ (toilets), ร้านกาแฟ (cafe), ห้างสรรพสินค้า (mall/supermarket/convenience)
+    ดึงข้อมูล amenity จาก Google Places API (Nearby Search)
+    ใช้ API Key เดียวกับ Google Maps
     """
-    query = f"""
-    [out:json][timeout:10];
-    (
-      node["amenity"="toilets"](around:{radius_m},{lat},{lng});
-      node["amenity"="cafe"](around:{radius_m},{lat},{lng});
-      node["amenity"="restaurant"](around:{radius_m},{lat},{lng});
-      node["shop"="mall"](around:{radius_m},{lat},{lng});
-      node["shop"="supermarket"](around:{radius_m},{lat},{lng});
-      node["shop"="convenience"](around:{radius_m},{lat},{lng});
-    );
-    out body;
-    """
-    overpass_url = "https://overpass-api.de/api/interpreter"
-
+    api_key = os.getenv("NEXT_PUBLIC_GOOGLE_MAPS_API_KEY", "")
+    
+    # กำหนดค่าเริ่มต้นเป็น False ทั้งหมด
     amenities = {
         "toilets": False,
         "cafe": False,
         "restaurant": False,
         "mall": False,
+        "hotel": False,
+        "hospital": False,
+        "bank": False,
+        "pharmacy": False,
+        "convenience": False,
+    }
+
+    if not api_key:
+        print("⚠️ ไม่พบ GOOGLE_MAPS_API_KEY ข้ามการค้นหาสิ่งอำนวยความสะดวก")
+        return amenities
+
+    url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+    
+    # ใน Google Places API เราค้นหาหลายประเภทพร้อมกันตรงๆ ไม่ได้ ต้องค้นหาทีละกลุ่ม
+    # หรือใช้ keyword ค้นหากว้างๆ แล้วมากรองจาก 'types' ที่ Google ส่งกลับมา
+    params = {
+        "location": f"{lat},{lng}",
+        "radius": radius_m,
+        "key": api_key,
+        "language": "th",
+        # ใช้ประเภทกว้างๆ หรือจะไม่ระบุก็ได้ แต่เพื่อประหยัดจำนวนผลลัพธ์ ลองดึงเฉพาะที่เกี่ยวกับร้านค้า/บริการ
+        "type": "point_of_interest" 
     }
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(overpass_url, data={"data": query})
-            if resp.status_code == 200:
-                elements = resp.json().get("elements", [])
-                for el in elements:
-                    tags = el.get("tags", {})
-                    amenity = tags.get("amenity", "")
-                    shop = tags.get("shop", "")
+            resp = await client.get(url, params=params)
+            data = resp.json()
 
-                    if amenity == "toilets":
-                        amenities["toilets"] = True
-                    if amenity in ("cafe",):
+            if data.get("status") == "OK":
+                results = data.get("results", [])
+                
+                # วนลูปดูผลลัพธ์ที่ Google หาเจอในรัศมี
+                for place in results:
+                    types = place.get("types", [])
+                    
+                    # เช็คประเภทสถานที่ (types) ที่ Google จับคู่ให้
+                    if "cafe" in types:
                         amenities["cafe"] = True
-                    if amenity in ("restaurant", "fast_food"):
+                    if "restaurant" in types or "food" in types:
                         amenities["restaurant"] = True
-                    if shop in ("mall", "supermarket", "convenience"):
+                    if "shopping_mall" in types:
                         amenities["mall"] = True
+                    if "lodging" in types: # Google ใช้คำว่า lodging แทน hotel
+                        amenities["hotel"] = True
+                    if "hospital" in types:
+                        amenities["hospital"] = True
+                    if "bank" in types or "atm" in types:
+                        amenities["bank"] = True
+                    if "pharmacy" in types:
+                        amenities["pharmacy"] = True
+                    if "convenience_store" in types:
+                        amenities["convenience"] = True
+                    
+                    # หมายเหตุ: Google Places ไม่มี type ที่เจาะจงว่า "ห้องน้ำสาธารณะ (toilets)" โดยตรง 
+                    # ยกเว้นจะเป็นจุดพักรถใหญ่ๆ เราจึงอาจต้องใช้ลอจิกช่วยบ้างในส่วนของห้องน้ำ
+                    
+            else:
+                 print(f"Google Places API error: {data.get('status')} - {data.get('error_message', '')}")
+
     except Exception as e:
-        print(f"⚠️ Overpass API error: {e}")
+        print(f"Request to Google Places API failed: {e}")
 
     return amenities
+
 
 # ===== Endpoint: Find Nearby Stations =====
 @app.post("/api/find-stations")
 async def find_nearby_stations(query: LocationQuery):
     nearby = []
+    print(f"\nเริ่มค้นหาพิกัด: {query.lat}, {query.lng} | รัศมี {query.radius_km} กม. ---")
+    print(f"จำนวนสถานีในระบบทั้งหมด: {len(STATIONS_DATA)} สถานี")
+    
+    if len(STATIONS_DATA) > 0:
+        print("รายชื่อคอลัมน์ที่อ่านได้จริง:", list(STATIONS_DATA[0].keys()))
 
     for s in STATIONS_DATA:
         try:
-            s_lat = float(s.get("latitude", 0) or 0)
-            s_lng = float(s.get("longitude", 0) or 0)
+            # ดึงค่าดิบมาก่อน
+            lat_raw = s.get("Lattitude", 0)
+            lng_raw = s.get("Longitude", 0)
+
+            # แปลงเป็นสตริงเพื่อจัดการกับช่องว่างและค่า NaN ของ Pandas
+            lat_str = str(lat_raw).strip()
+            lng_str = str(lng_raw).strip()
+
+            # ถ้าใน CSV ช่องว่างเปล่า มันจะกลายเป็นคำว่า 'nan' ให้ข้ามไปเลย
+            if lat_str.lower() == 'nan' or lng_str.lower() == 'nan' or lat_str == '' or lng_str == '':
+                continue
+
+            s_lat = float(lat_str)
+            s_lng = float(lng_str)
+
             if s_lat == 0 or s_lng == 0:
                 continue
 
+            # คำนวณระยะทาง
             dist = haversine(query.lat, query.lng, s_lat, s_lng)
+
             if dist <= query.radius_km:
+                
+                # จัดการเวลา
+                open_time = str(s.get("เวลาเปิด", "00:00")).strip()
+                close_time = str(s.get("เวลาปิด", "23:59")).strip()
+                if open_time.lower() == "nan" or close_time.lower() == "nan" or not open_time:
+                    time_str = "เปิดบริการ 24 ชั่วโมง"
+                else:
+                    time_str = f"เปิดบริการ {open_time} - {close_time}"
+
+                # จัดการหัวชาร์จ AC/DC
+                dc_count = int(float(str(s.get("จำนวนหัวชาร์จ DC", 0)).replace('nan', '0') or 0))
+                ac_count = int(float(str(s.get("จำนวนหัวชาร์จ AC", 0)).replace('nan', '0') or 0))
+
+                if dc_count > 0 and ac_count > 0:
+                    charge_type = "AC/DC"
+                elif dc_count > 0:
+                    charge_type = "DC"
+                elif ac_count > 0:
+                    charge_type = "AC"
+                else:
+                    charge_type = ""
+
                 nearby.append({
-                    "id": str(s.get("station_id_operator", "N/A")),
-                    "name": str(s.get("station_name", "สถานีไม่มีชื่อ")),
+                    "id": str(s.get("ชื่อสถานี", "N/A")), 
+                    "name": str(s.get("ชื่อสถานี", "สถานีไม่มีชื่อ")),
                     "lat": s_lat,
                     "lng": s_lng,
-                    "type": str(s.get("ac_dc_Mix", "N/A")),
-                    "address": str(s.get("province", "ไม่ระบุ")),
-                    "connectors": str(s.get("connector_type", "")),
-                    "power_kw": s.get("max_power_kw", 0),
-                    "network": str(s.get("network", "EleX by EGAT")),
-                    "time": "เปิดบริการ จ - อา 00:00-23:59",
+                    "type": charge_type,
+                    "address": str(s.get("พิกัดเครื่องชาร์จ", "ไม่ระบุ")),
+                    "connectors": "",
+                    "power_kw": 0,
+                    "network": str(s.get("ชื่อโอเปอเรเตอร์", "EleX by EGAT")),
+                    "time": time_str,
                     "distance_km": round(dist, 2),
                 })
-        except (ValueError, TypeError):
+        except Exception as e:
+            # ปริ้นบอกเลยว่า Error แถวไหน จะได้รู้ว่า CSV มีตัวหนังสือแปลกๆ ปนตรงไหนไหม
+            print(f"ข้ามสถานี {s.get('ชื่อสถานี', 'Unknown')} เนื่องจาก Error: {e}")
             continue
 
     nearby.sort(key=lambda x: x["distance_km"])
+    print(f"✅ ผลลัพธ์: พบ {len(nearby)} สถานีในรัศมี {query.radius_km} กม.")
     return {"status": "success", "count": len(nearby), "data": nearby}
+
 
 # ===== Endpoint: Get Amenities Near Station =====
 @app.post("/api/amenities")
@@ -144,22 +231,18 @@ async def get_amenities(query: AmenityQuery):
     amenities = await fetch_amenities(query.lat, query.lng, query.radius_m)
     return {"status": "success", "amenities": amenities}
 
+
 # ===== Endpoint: Calculate Route Distance (Google Maps Directions) =====
 @app.post("/api/route")
 async def get_route(query: RouteQuery):
-    """
-    คำนวณระยะทางและเวลาจากจุดเริ่มต้นไปยังสถานีชาร์จ
-    ใช้ Google Maps Directions API
-    """
     api_key = os.getenv("GOOGLE_MAPS_API_KEY", "")
     if not api_key:
-        # Fallback: คืนค่า haversine ถ้าไม่มี API key
         dist = haversine(query.origin_lat, query.origin_lng, query.dest_lat, query.dest_lng)
         return {
             "status": "success",
             "distance_km": round(dist, 2),
-            "duration_min": round(dist * 2, 0),  # ประมาณ 30 km/h
-            "source": "haversine"
+            "duration_min": round(dist * 2, 0),
+            "source": "haversine",
         }
 
     url = "https://maps.googleapis.com/maps/api/directions/json"
@@ -184,14 +267,18 @@ async def get_route(query: RouteQuery):
                 "distance_text": leg["distance"]["text"],
                 "duration_min": round(leg["duration"]["value"] / 60, 1),
                 "duration_text": leg["duration"]["text"],
-                "source": "google_maps"
+                "source": "google_maps",
             }
         else:
             return {"status": "error", "message": data["status"]}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+
 # ===== Health Check =====
 @app.get("/")
 def root():
-    return {"message": "EleX EV Station API is running 🚗⚡", "stations_loaded": len(STATIONS_DATA)}
+    return {
+        "message": "EleX EV Station API is running 🚗⚡",
+        "stations_loaded": len(STATIONS_DATA),
+    }
