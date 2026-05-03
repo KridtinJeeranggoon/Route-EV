@@ -8,6 +8,7 @@ import {
   Circle,
   DirectionsRenderer,
   Libraries,
+  MarkerClusterer,
 } from "@react-google-maps/api";
 
 // ===== CONFIG =====
@@ -64,7 +65,7 @@ const CONNECTOR_LOGOS: Record<string, string> = {
 
 const RADIUS_OPTIONS = [5, 10, 15, 50, 100];
 
-const YELLOW = "#FFD600";
+const YELLOW = "#ffd500";
 const DARK = "#1a1a1a";
 const BORDER = "#e8e8e8";
 
@@ -78,6 +79,8 @@ export default function EleXApp() {
   const [radiusKm, setRadiusKm] = useState(10);
   const [powerFilter, setPowerFilter] = useState(200);
   const [selectedConnectors, setSelectedConnectors] = useState<string[]>(["Type 2", "CCS2"]);
+  const [amenityFilters, setAmenityFilters] = useState<string[]>([]); // ตัวกรอง amenity
+  const [amenityLoadingAll, setAmenityLoadingAll] = useState(false); // โหลด amenity ทุกสถานี
   const [selectedStation, setSelectedStation] = useState<Station | null>(null);
   const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null);
   const [routeInfo, setRouteInfo] = useState<RouteInfo | null>(null);
@@ -92,10 +95,43 @@ export default function EleXApp() {
     libraries: LIBRARIES,
   });
 
-  // ===== Fetch Stations =====
+  // ===== Fetch amenity สำหรับ 1 สถานี (ไม่ set loading global) =====
+  const fetchAmenitySingle = useCallback(async (station: Station) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/amenities`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lat: station.lat, lng: station.lng, radius_m: 200 }),
+      });
+      const json = await res.json();
+      const apiAmenities = json.amenities || {
+        toilets: false, cafe: false, restaurant: false, mall: false,
+        hotel: false, hospital: false, bank: false,
+        pharmacy: false, convenience: false, fast_food: false,
+      };
+      // ชื่อสถานีบอก toilet ได้โดยตรง
+      const name = station.name.toLowerCase();
+      if (
+        name.includes("pt ") || name.includes("pt-") || name.includes("พีที") ||
+        name.includes("ปั๊ม") || name.includes("สถานีบริการ") ||
+        name.includes("เซ็นทรัล") || name.includes("central") ||
+        name.includes("โลตัส") || name.includes("lotus") ||
+        name.includes("โรบินสัน") || name.includes("robinson") ||
+        name.includes("บิ๊กซี") || name.includes("big c")
+      ) {
+        apiAmenities.toilets = true;
+      }
+      return apiAmenities;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // ===== Fetch Stations + โหลด amenity ทุกสถานีใน background =====
   const fetchStations = useCallback(
     async (loc: { lat: number; lng: number }, radius?: number) => {
       setLoading(true);
+      setAmenityLoadingAll(true);
       const r = radius ?? radiusKm;
       try {
         const res = await fetch(`${API_BASE}/api/find-stations`, {
@@ -104,60 +140,48 @@ export default function EleXApp() {
           body: JSON.stringify({ lat: loc.lat, lng: loc.lng, radius_km: r }),
         });
         const json = await res.json();
-        setStations(json.data || []);
+        const rawStations: Station[] = json.data || [];
+        setStations(rawStations);
         setSelectedStation(null);
         setDirections(null);
         setRouteInfo(null);
+        setLoading(false);
+
+        // โหลด amenity ทีละ 3 สถานีพร้อมกัน (ไม่ล้น API)
+        const BATCH = 3;
+        for (let i = 0; i < rawStations.length; i += BATCH) {
+          const batch = rawStations.slice(i, i + BATCH);
+          const results = await Promise.all(batch.map(fetchAmenitySingle));
+          setStations((prev) =>
+            prev.map((s) => {
+              const idx = batch.findIndex((b) => b.id === s.id);
+              if (idx !== -1 && results[idx] !== null) {
+                return { ...s, amenities: results[idx]! };
+              }
+              return s;
+            })
+          );
+        }
       } catch (e) {
         console.error("fetchStations error:", e);
-      } finally {
         setLoading(false);
+      } finally {
+        setAmenityLoadingAll(false);
       }
     },
-    [radiusKm]
+    [radiusKm, fetchAmenitySingle]
   );
 
-  // ===== Fetch Amenities for a station =====
+  // ===== Fetch Amenities for a station (เมื่อคลิก - refresh ข้อมูล) =====
   const fetchAmenities = useCallback(async (station: Station) => {
     setAmenityLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/amenities`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lat: station.lat, lng: station.lng, radius_m: 500 }),
-      });
-      const json = await res.json();
-      
-      // 1. รับค่าความแม่นยำ 100% จาก Google Places API ที่ส่งมาจาก Backend
-      const apiAmenities = json.amenities || {
-        toilets: false, cafe: false, restaurant: false, mall: false,
-        hotel: false, hospital: false, bank: false,
-        pharmacy: false, convenience: false,
-      };
-
-      // 2. ช่วย Google หาห้องน้ำ เพราะ Google ไม่ค่อยมีหมุดห้องน้ำสาธารณะ
-      const name = station.name.toLowerCase();
-    
-      // ถ้าชื่อสถานที่คือ ปั๊มน้ำมัน หรือ ห้างสรรพสินค้า บังคับให้ห้องน้ำ เป็น True ไปเลย
-      if (
-        name.includes("pt ") || name.includes("pt-") || name.includes("พีที") ||
-        name.includes("ปั๊ม") || name.includes("สถานีบริการ") ||
-        name.includes("เซ็นทรัล") || name.includes("central") || 
-        name.includes("โลตัส") || name.includes("lotus") || 
-        name.includes("โรบินสัน") || name.includes("robinson") ||
-        name.includes("บิ๊กซี") || name.includes("big c")
-      ) {
-        apiAmenities.toilets = true;
-      }
-
-      return apiAmenities;
-    } catch (e) {
-      console.error("fetchAmenities error:", e);
-      return null;
+      const result = await fetchAmenitySingle(station);
+      return result;
     } finally {
       setAmenityLoading(false);
     }
-  }, []);
+  }, [fetchAmenitySingle]);
 
   // ===== Calculate Route =====
   const calculateRoute = useCallback(
@@ -263,6 +287,11 @@ export default function EleXApp() {
       prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
     );
 
+  const toggleAmenityFilter = (key: string) =>
+    setAmenityFilters((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+    );
+
   const clearRoute = () => {
     setDirections(null);
     setRouteInfo(null);
@@ -273,15 +302,30 @@ export default function EleXApp() {
     }
   };
 
-  // ===== Filter stations by search (name + address + network) =====
+  // ===== Filter stations =====
   const filteredStations = stations.filter((s) => {
     const q = searchQuery.toLowerCase();
-    return (
+    const matchSearch =
       s.name.toLowerCase().includes(q) ||
       s.address.toLowerCase().includes(q) ||
       s.network.toLowerCase().includes(q) ||
-      s.connectors.toLowerCase().includes(q)
-    );
+      s.connectors.toLowerCase().includes(q);
+
+    // ถ้ากำลังโหลด amenity อยู่ หรือไม่ได้เลือก filter → แสดงทั้งหมด
+    // ถ้าโหลดเสร็จแล้ว → กรองเฉพาะสถานีที่ผ่านทุก key
+    const matchAmenity =
+      amenityFilters.length === 0 ||
+      amenityLoadingAll ||
+      (s.amenities != null &&
+        amenityFilters.every(
+          (key) => (s.amenities as Record<string, boolean>)[key] === true
+        ));
+    // กรองด้วยกำลังไฟขั้นต่ำ
+    const stationPower = s.power_kw || 200; 
+    const matchPower = stationPower >= powerFilter;
+
+    // ส่งคืนผลลัพธ์โดยต้องผ่านทั้ง 3 เงื่อนไขถึงจะโชว์บนหน้าจอ
+    return matchSearch && matchAmenity && matchPower;
   });
 
   return (
@@ -336,8 +380,8 @@ export default function EleXApp() {
               }}
             >
               {/* โลโก้ซ้ายบน */}
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <img src="/image/logo-EleX-by-EGAT.png" alt="EleX Logo" style={{ height: "36px", objectFit: "contain" }} />
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <img src="/image/logo-EleX-by-EGAT.png" alt="EleX Logo" style={{ height: "65px", objectFit: "contain" }} />
                 <div style={{ fontSize: "12px", color: "#555", fontWeight: 600 }}>
                   {loading ? "กำลังค้นหา..." : `${stations.length} สถานี`}
                 </div>
@@ -363,6 +407,7 @@ export default function EleXApp() {
                 <option value={15}>รัศมี 15 กม.</option>
                 <option value={50}>รัศมี 50 กม.</option>
                 <option value={100}>รัศมี 100 กม.</option>
+                <option value={9999}>สถานีทั้งหมด</option>
               </select>
             </div>
 
@@ -377,15 +422,22 @@ export default function EleXApp() {
                   width: "100%",
                   padding: "11px 40px 11px 16px",
                   borderRadius: "25px",
-                  border: `1.5px solid ${BORDER}`,
+                  border: `1.5px solid ${searchQuery ? YELLOW : "#ffd500"}`,
                   outline: "none",
                   fontSize: "13px",
                   boxSizing: "border-box",
-                  backgroundColor: "#fafafa",
-                  transition: "border 0.2s",
+                  backgroundColor: "#fffde7",
+                  color: "#000",
+                  transition: "border 0.2s, box-shadow 0.2s",
                 }}
-                onFocus={(e) => (e.target.style.borderColor = YELLOW)}
-                onBlur={(e) => (e.target.style.borderColor = BORDER)}
+                onFocus={(e) => {
+                  e.target.style.borderColor = YELLOW;
+                  e.target.style.boxShadow = "0 0 0 3px rgba(255,214,0,0.22)";
+                }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = searchQuery ? YELLOW : "#ffd500";
+                  e.target.style.boxShadow = "none";
+                }}
               />
               {searchQuery ? (
                 <span
@@ -402,14 +454,14 @@ export default function EleXApp() {
                   ✕
                 </span>
               ) : (
-                <span style={{ position: "absolute", right: "14px", top: "11px", color: "#aaa" }}>
+                <span style={{ position: "absolute", right: "14px", top: "12px", color: "#ffd500", fontSize: "15px" }}>
                 </span>
               )}
             </div>
 
             {/* Tabs */}
             <div style={{ display: "flex", gap: "2px" }}>
-              {["สถานีชาร์จ", "กำลังไฟ", "หัวจ่าย", "เครือข่าย"].map((tab) => (
+              {["สถานีชาร์จ", "กำลังไฟ", "หัวจ่าย", "สิ่งอำนวยฯ", "เครือข่าย"].map((tab) => (
                 <div
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -439,7 +491,8 @@ export default function EleXApp() {
               padding: "16px 20px",
               borderBottom: `1px solid ${BORDER}`,
               minHeight: "80px",
-              maxHeight: "150px",
+              maxHeight: activeTab === "สิ่งอำนวยฯ" ? "240px" : "150px",
+              overflowY: activeTab === "สิ่งอำนวยฯ" ? "auto" : "visible",
             }}
           >
             {activeTab === "สถานีชาร์จ" && (
@@ -549,6 +602,93 @@ export default function EleXApp() {
               </div>
             )}
 
+            {activeTab === "สิ่งอำนวยฯ" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                  <div style={{ fontSize: "11px", color: "#888", fontWeight: 600 }}>
+                    {amenityLoadingAll
+                      ? "กำลังโหลดข้อมูลสิ่งอำนวยความสะดวก..."
+                      : "กรองสถานีตามสิ่งอำนวยความสะดวกในรัศมี 200 ม."}
+                  </div>
+                  
+                  {amenityFilters.length > 0 && (
+                    <button
+                      onClick={() => setAmenityFilters([])}
+                      style={{
+                        padding: "4px 8px",
+                        borderRadius: "15px",
+                        border: `1px solid #ffcdd2`,
+                        backgroundColor: "#ffebee",
+                        fontSize: "10px",
+                        color: "#d32f2f",
+                        cursor: "pointer",
+                        fontWeight: 600,
+                      }}
+                    >
+                      ✕ ล้าง ({amenityFilters.length})
+                    </button>
+                  )}
+                </div>
+
+                {amenityLoadingAll && (
+                  <div style={{
+                    fontSize: "11px", color: "#ffd500", marginBottom: "8px",
+                    backgroundColor: "#fffbeb", padding: "6px 10px",
+                    borderRadius: "8px", border: "1px solid #ffd500"
+                  }}>
+                    กำลังตรวจสอบสิ่งอำนวยความสะดวกรอบสถานีทั้งหมด รอสักครู่...
+                  </div>
+                )}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "7px" }}>
+                  {[
+                    { key: "toilets",     icon: "/image/icn-toilet.png",      emoji: "🚻", label: "ห้องน้ำ" },
+                    { key: "cafe",        icon: "/image/icn-coffee.png",       emoji: "☕", label: "ร้านกาแฟ" },
+                    { key: "restaurant",  icon: "/image/icn-food.png",         emoji: "🍜", label: "ร้านอาหาร" },
+                    { key: "mall",        icon: "/image/icn-mall.png",         emoji: "🏬", label: "ห้าง/ร้านค้า" },
+                    { key: "hotel",       icon: "/image/icn-hotel.jpeg",       emoji: "🏨", label: "โรงแรม" },
+                    { key: "hospital",    icon: "/image/icn-hospital.jpg",     emoji: "🏥", label: "โรงพยาบาล" },
+                    { key: "bank",        icon: "/image/icn-bank.jpg",         emoji: "🏦", label: "ธนาคาร" },
+                    { key: "pharmacy",    icon: "/image/icn-pharmacy.webp",    emoji: "💊", label: "ร้านยา" },
+                    { key: "convenience", icon: "/image/icn-convenience.jpg",  emoji: "🏪", label: "ร้านสะดวกซื้อ" },
+                  ].map(({ key, icon, emoji, label }) => {
+                    const active = amenityFilters.includes(key);
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => toggleAmenityFilter(key)}
+                        style={{
+                          padding: "7px 10px",
+                          borderRadius: "20px",
+                          fontSize: "12px",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "7px",
+                          backgroundColor: active ? YELLOW : "#fff",
+                          border: `1.5px solid ${active ? "#ffd500" : BORDER}`,
+                          fontWeight: active ? 700 : 400,
+                          color: active ? DARK : "#666",
+                          transition: "0.15s",
+                        }}
+                      >
+                        <img
+                          src={icon}
+                          alt={label}
+                          style={{ width: "16px", height: "16px", objectFit: "contain" }}
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = "none";
+                            (e.target as HTMLImageElement).insertAdjacentText("afterend", emoji);
+                          }}
+                        />
+                        {label}
+                        {active && <span style={{ marginLeft: "auto", fontSize: "10px" }}>✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {activeTab === "เครือข่าย" && (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
                 {[
@@ -561,16 +701,16 @@ export default function EleXApp() {
                     key={net.name}
                     style={{
                       padding: "12px 10px",
-                      backgroundColor: YELLOW,
+                      backgroundColor: "#f0f0f0",
                       borderRadius: "10px",
-                      cursor: "pointer",
-                      border: `1px solid #e5c100`,
+                      cursor: "default",
+                      border: `1px solid #d8d8d8`,
                     }}
                   >
-                    <div style={{ fontWeight: 700, fontSize: "13px", color: DARK }}>
+                    <div style={{ fontWeight: 700, fontSize: "13px", color: "#666" }}>
                       {net.name}
                     </div>
-                    <div style={{ fontSize: "11px", color: "#555", marginTop: "3px" }}>
+                    <div style={{ fontSize: "11px", color: "#999", marginTop: "3px" }}>
                       {net.count}
                     </div>
                   </div>
@@ -583,7 +723,7 @@ export default function EleXApp() {
           <div ref={listRef} style={{ flex: 1, overflowY: "auto" }}>
             {loading ? (
               <div style={{ padding: "40px", textAlign: "center", color: "#aaa" }}>
-                <div style={{ fontSize: "28px", marginBottom: "10px" }}>⚡</div>
+                <div style={{ fontSize: "28px", marginBottom: "10px" }}></div>
                 กำลังโหลดสถานีชาร์จ...
               </div>
             ) : filteredStations.length === 0 ? (
@@ -631,16 +771,21 @@ export default function EleXApp() {
               {/* My Location */}
               <Marker
                 position={currentLocation}
-                icon={{
-                  url: "http://maps.google.com/mapfiles/ms/icons/blue-dot.png",
-                  scaledSize: new google.maps.Size(40, 40),
-                }}
                 title="ตำแหน่งของคุณ"
+                icon={{
+                  path: "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z",
+                  fillColor: "#4285F4", // สีฟ้าของตำแหน่งเรา
+                  fillOpacity: 1,
+                  strokeWeight: 2,
+                  strokeColor: "#000",
+                  scale: 1.5,
+                  anchor: new google.maps.Point(12, 24),
+                }}
                 zIndex={999}
               />
 
               {/* Search radius circle */}
-              {!directions && (
+              {!directions && radiusKm !== 9999 && (
                 <Circle
                   center={currentLocation}
                   radius={radiusKm * 1000}
@@ -662,24 +807,30 @@ export default function EleXApp() {
                   title={s.name}
                   onClick={() => handleSelectStation(s)}
                   icon={{
-                    url:
-                      selectedStation?.id === s.id
-                        ? "http://maps.google.com/mapfiles/ms/icons/yellow-dot.png"
-                        : "http://maps.google.com/mapfiles/ms/icons/green-dot.png",
-                    scaledSize: new google.maps.Size(36, 36),
+                    path: "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z",
+                    fillColor: "#ffd500", // 👈 ใส่รหัสสีเหลือง EleX ตรงนี้
+                    fillOpacity: 1, // ความทึบสี (1 = ทึบสุด)
+                    strokeWeight: 1.5, // ความหนาขอบ
+                    strokeColor: "#000",
+                    
+                    // ใช้ scale เป็นตัวเลขแทน ถ้าถูกเลือกให้ขนาดเป็น 2 ถ้าไม่เลือกให้เป็น 1.5
+                    scale: selectedStation?.id === s.id ? 2 : 1.5, 
+                    
+                    // จุดกึ่งกลางหมุด
+                    anchor: new google.maps.Point(12, 24),
                   }}
                   zIndex={selectedStation?.id === s.id ? 100 : 1}
                 />
               ))}
 
-              {/* Route */}
+              {/* Route เส้นนำทาง */}
               {directions && (
                 <DirectionsRenderer
                   directions={directions}
                   options={{
                     suppressMarkers: false,
                     polylineOptions: {
-                      strokeColor: "#FFD600",
+                      strokeColor: "#ffd500",
                       strokeWeight: 5,
                       strokeOpacity: 0.9,
                     },
@@ -700,7 +851,7 @@ export default function EleXApp() {
                 color: "#888",
               }}
             >
-              ⚡ กำลังโหลดแผนที่...
+              กำลังโหลดแผนที่...
             </div>
           )}
 
@@ -934,7 +1085,7 @@ function StationCard({
                 marginBottom: "8px",
               }}
             >
-              สิ่งอำนวยความสะดวกในรัศมี 500 ม.
+              สิ่งอำนวยความสะดวกรอบข้าง (200 ม.)
             </div>
             {amenityLoading ? (
               <div style={{ fontSize: "11px", color: "#aaa" }}>กำลังค้นหา...</div>

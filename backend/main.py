@@ -38,15 +38,14 @@ class AmenityQuery(BaseModel):
 
 # ===== Load Station CSV =====
 def load_stations_from_csv():
-    # 🔧 แก้ path ให้ตรงกับไฟล์ CSV ของคุณ
     file_path = r"C:\Users\pinkp\OneDrive\Desktop\my_project\WebApp_noey\data\egat-data.csv"
     try:
         df = pd.read_csv(file_path, encoding="utf-8-sig")
         df.columns = df.columns.str.strip()
-        print(f"✅ โหลดข้อมูล CSV สำเร็จ: {len(df)} สถานี | คอลัมน์: {list(df.columns)}")
+        print(f"โหลดข้อมูล CSV สำเร็จ: {len(df)} สถานี | คอลัมน์: {list(df.columns)}")
         return df.to_dict(orient="records")
     except Exception as e:
-        print(f"❌ Error loading CSV: {e}")
+        print(f"Error loading CSV: {e}")
         return []
 
 STATIONS_DATA = load_stations_from_csv()
@@ -65,16 +64,24 @@ def haversine(lat1, lon1, lat2, lon2):
     )
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
+AMENITY_CACHE = {}
 
-# ===== Overpass API: Expanded Amenity Finder =====
-async def fetch_amenities(lat: float, lng: float, radius_m: int = 500):
+# ===== Google Places API: Amenity Finder =====
+async def fetch_amenities(lat: float, lng: float, radius_m: int = 200):
     """
-    ดึงข้อมูล amenity จาก Google Places API (Nearby Search)
-    ใช้ API Key เดียวกับ Google Maps
+    ดึง amenity จาก Google Places Nearby Search
+    ค้นหาแยกทีละ type เพื่อให้ครอบคลุม
     """
-    api_key = os.getenv("NEXT_PUBLIC_GOOGLE_MAPS_API_KEY", "")
+
+    cache_key = f"{round(lat, 4)},{round(lng, 4)}_{radius_m}"
     
-    # กำหนดค่าเริ่มต้นเป็น False ทั้งหมด
+    if cache_key in AMENITY_CACHE:
+        print(f"[CACHE] โหลดจากที่จำไว้ (ไม่เสียเงิน API): {cache_key}")
+        return AMENITY_CACHE[cache_key]
+
+    # อ่าน key จากทั้งสองชื่อ (รองรับทั้ง .env ของ Python และ Next.js)
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY") or os.getenv("NEXT_PUBLIC_GOOGLE_MAPS_API_KEY", "")
+
     amenities = {
         "toilets": False,
         "cafe": False,
@@ -85,63 +92,87 @@ async def fetch_amenities(lat: float, lng: float, radius_m: int = 500):
         "bank": False,
         "pharmacy": False,
         "convenience": False,
+        "fast_food": False,
     }
 
     if not api_key:
-        print("⚠️ ไม่พบ GOOGLE_MAPS_API_KEY ข้ามการค้นหาสิ่งอำนวยความสะดวก")
+        print("ไม่พบ GOOGLE_MAPS_API_KEY — ข้าม amenity fetch")
         return amenities
 
     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
-    
-    # ใน Google Places API เราค้นหาหลายประเภทพร้อมกันตรงๆ ไม่ได้ ต้องค้นหาทีละกลุ่ม
-    # หรือใช้ keyword ค้นหากว้างๆ แล้วมากรองจาก 'types' ที่ Google ส่งกลับมา
-    params = {
+    base_params = {
         "location": f"{lat},{lng}",
         "radius": radius_m,
         "key": api_key,
         "language": "th",
-        # ใช้ประเภทกว้างๆ หรือจะไม่ระบุก็ได้ แต่เพื่อประหยัดจำนวนผลลัพธ์ ลองดึงเฉพาะที่เกี่ยวกับร้านค้า/บริการ
-        "type": "point_of_interest" 
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, params=params)
-            data = resp.json()
+    # แมป Google type → key ของเรา
+    # Google Places รองรับค้นหาทีละ type เท่านั้น จึงต้องแยก request
+    TYPE_MAP = {
+        "cafe":             "cafe",
+        "restaurant":       "restaurant",
+        "shopping_mall":    "mall",
+        "supermarket":      "mall",
+        "lodging":          "hotel",
+        "hospital":         "hospital",
+        "bank":             "bank",
+        "atm":              "bank",
+        "pharmacy":         "pharmacy",
+        "drugstore":        "pharmacy",
+        "convenience_store":"convenience",
+        "gas_station":      "toilets",   # ปั๊มน้ำมันมักมีห้องน้ำ
+        "fast_food":        "fast_food",
+    }
 
-            if data.get("status") == "OK":
-                results = data.get("results", [])
-                
-                # วนลูปดูผลลัพธ์ที่ Google หาเจอในรัศมี
-                for place in results:
-                    types = place.get("types", [])
-                    
-                    # เช็คประเภทสถานที่ (types) ที่ Google จับคู่ให้
-                    if "cafe" in types:
-                        amenities["cafe"] = True
-                    if "restaurant" in types or "food" in types:
-                        amenities["restaurant"] = True
-                    if "shopping_mall" in types:
-                        amenities["mall"] = True
-                    if "lodging" in types: # Google ใช้คำว่า lodging แทน hotel
-                        amenities["hotel"] = True
-                    if "hospital" in types:
-                        amenities["hospital"] = True
-                    if "bank" in types or "atm" in types:
-                        amenities["bank"] = True
-                    if "pharmacy" in types:
-                        amenities["pharmacy"] = True
-                    if "convenience_store" in types:
-                        amenities["convenience"] = True
-                    
-                    # หมายเหตุ: Google Places ไม่มี type ที่เจาะจงว่า "ห้องน้ำสาธารณะ (toilets)" โดยตรง 
-                    # ยกเว้นจะเป็นจุดพักรถใหญ่ๆ เราจึงอาจต้องใช้ลอจิกช่วยบ้างในส่วนของห้องน้ำ
-                    
-            else:
-                 print(f"Google Places API error: {data.get('status')} - {data.get('error_message', '')}")
+    # types ที่จะค้นหา (รวมกัน 1 request ได้ตัวละ 20 ผลลัพธ์)
+    # เราค้นหา 3 กลุ่มเพื่อลด API call
+    search_groups = [
+        ["cafe", "restaurant", "fast_food"],
+        ["shopping_mall", "supermarket", "convenience_store", "gas_station"],
+        ["lodging", "hospital", "bank", "pharmacy"],
+    ]
+
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            for group in search_groups:
+                for place_type in group:
+                    params = {**base_params, "type": place_type}
+                    resp = await client.get(url, params=params)
+                    data = resp.json()
+                    status = data.get("status", "")
+
+                    if status == "OK":
+                        for place in data.get("results", []):
+                            types = place.get("types", [])
+                            for g_type, our_key in TYPE_MAP.items():
+                                if g_type in types:
+                                    amenities[our_key] = True
+
+                    elif status == "ZERO_RESULTS":
+                        pass  # ไม่เจอ ปกติ
+                    else:
+                        print(f"Places API [{place_type}]: {status} — {data.get('error_message','')}")
+
+                    # ถ้าเจอทุก key แล้ว ไม่ต้องค้นต่อ
+                    if all(amenities.values()):
+                        break
 
     except Exception as e:
-        print(f"Request to Google Places API failed: {e}")
+        print(f"fetch_amenities error: {e}")
+
+    # ===== Smart Toilet Logic =====
+    # Google ไม่มี type "toilet" โดยตรง
+    # ให้ห้องน้ำ = True เฉพาะสถานที่ที่ "การันตี" ว่ามีห้องน้ำจริงๆ เท่านั้น
+    # (ห้างใหญ่ และ gas_station ที่ map ไว้ใน TYPE_MAP แล้ว)
+    # ไม่รวม restaurant/fast_food เพราะร้านเล็กอาจไม่มีหรือไม่อนุญาตลูกค้านอก
+    if not amenities["toilets"]:
+        if amenities["mall"]:   # ห้างใหญ่มีห้องน้ำสาธารณะแน่นอน
+            amenities["toilets"] = True
+
+    print(f"Amenities ({radius_m}m) @ ({lat:.4f},{lng:.4f}): { {k:v for k,v in amenities.items() if v} }")
+    
+    AMENITY_CACHE[cache_key] = amenities
 
     return amenities
 
@@ -221,7 +252,7 @@ async def find_nearby_stations(query: LocationQuery):
             continue
 
     nearby.sort(key=lambda x: x["distance_km"])
-    print(f"✅ ผลลัพธ์: พบ {len(nearby)} สถานีในรัศมี {query.radius_km} กม.")
+    print(f"ผลลัพธ์: พบ {len(nearby)} สถานีในรัศมี {query.radius_km} กม.")
     return {"status": "success", "count": len(nearby), "data": nearby}
 
 
@@ -281,4 +312,31 @@ def root():
     return {
         "message": "EleX EV Station API is running 🚗⚡",
         "stations_loaded": len(STATIONS_DATA),
+        "columns": list(STATIONS_DATA[0].keys()) if STATIONS_DATA else [],
+    }
+
+
+# ===== Debug: ดูข้อมูล 3 แถวแรก =====
+@app.get("/debug/sample")
+def debug_sample():
+    """เปิด http://localhost:8000/debug/sample เพื่อเช็คว่า CSV โหลดถูกต้องไหม"""
+    if not STATIONS_DATA:
+        return {"error": "ไม่มีข้อมูล — CSV โหลดไม่ขึ้น ตรวจสอบ path และ encoding"}
+    return {
+        "total": len(STATIONS_DATA),
+        "columns": list(STATIONS_DATA[0].keys()),
+        "sample_3_rows": STATIONS_DATA[:3],
+    }
+
+
+# ===== Debug: ทดสอบ amenity 1 พิกัด =====
+@app.get("/debug/amenity")
+async def debug_amenity(lat: float = 13.756, lng: float = 100.501, r: int = 500):
+    """เปิด http://localhost:8000/debug/amenity?lat=13.756&lng=100.501 เพื่อทดสอบ"""
+    result = await fetch_amenities(lat, lng, r)
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY") or os.getenv("NEXT_PUBLIC_GOOGLE_MAPS_API_KEY", "")
+    return {
+        "api_key_loaded": bool(api_key),
+        "api_key_preview": api_key[:8] + "..." if api_key else "ไม่พบ key",
+        "amenities": result,
     }
