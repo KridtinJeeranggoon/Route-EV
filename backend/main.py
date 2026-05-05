@@ -34,7 +34,7 @@ class AmenityQuery(BaseModel):
 
 # ===== Load Station CSV =====
 def load_stations_from_csv():
-    file_path = r"/Users/apcy/Downloads/Route-EV/data/egat-data.csv"
+    file_path = r"C:\Users\pinkp\OneDrive\Desktop\my_project\WebApp_noey\data\egat-data.csv"
     try:
         df = pd.read_csv(file_path, encoding="utf-8-sig")
         df.columns = df.columns.str.strip()
