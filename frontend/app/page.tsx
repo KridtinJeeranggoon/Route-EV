@@ -11,7 +11,6 @@ const MapView = dynamic(() => import("./MapView"), {
 const FALLBACK_LOCATION = { lat: 14.015, lng: 100.725 };
 const API_BASE = "http://localhost:8000";
 
-// --- จุดที่ 1: เพิ่ม price ใน Interface ---
 interface Station { id: string; name: string; lat: number; lng: number; type: string; address: string; connectors: string; power_kw: number; price?: string; network: string; time: string; distance_km: number; amenities?: any; }
 interface RouteInfo { distance_km: number; distance_text?: string; duration_min: number; duration_text?: string; coordinates?: [number, number][]; }
 
@@ -33,11 +32,14 @@ export default function EleXApp() {
   const [powerFilters, setPowerFilters] = useState<number[]>([]);
   const [displayPower, setDisplayPower] = useState(0);
   const [amenityFilters, setAmenityFilters] = useState<string[]>([]); 
-  const [selectedConnectors, setSelectedConnectors] = useState<string[]>(["Type 2", "CCS2"]); // State สำหรับหัวชาร์จ
+  const [selectedConnectors, setSelectedConnectors] = useState<string[]>(["Type 2", "CCS2"]);
   const [selectedStation, setSelectedStation] = useState<Station | null>(null);
   const [routeInfo, setRouteInfo] = useState<RouteInfo | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
   
+  // --- ส่วนที่เพิ่มเพื่อจัดการการเปลี่ยนสีปุ่มสถานี ---
+  const [statusFilters, setStatusFilters] = useState<string[]>(["เปิดให้บริการ"]);
+
   const [mapCenter, setMapCenter] = useState(FALLBACK_LOCATION);
   const [mapZoom, setMapZoom] = useState(11);
 
@@ -91,6 +93,12 @@ export default function EleXApp() {
   const toggleConnector = (type: string) => setSelectedConnectors((prev) => prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]);
   const toggleAmenityFilter = (key: string) => setAmenityFilters((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
   const togglePowerFilter = (power: number) => setPowerFilters((prev) => prev.includes(power) ? prev.filter((p) => p !== power) : [...prev, power]);
+  
+  // --- ฟังก์ชันสลับสีปุ่มสถานี ---
+  const toggleStatusFilter = (label: string) => {
+    setStatusFilters(prev => prev.includes(label) ? prev.filter(l => l !== label) : [...prev, label]);
+  };
+
   const clearRoute = () => { setRouteInfo(null); setSelectedStation(null); setMapCenter(currentLocation); setMapZoom(radiusKm <= 5 ? 13 : radiusKm <= 10 ? 11 : 10); };
 
   const filteredStations = stations.filter((s) => {
@@ -118,7 +126,6 @@ export default function EleXApp() {
     <div style={{ backgroundColor: "#f4f5f7", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans Thai', 'Sarabun', sans-serif" }}>
       <div style={{ width: "100%", maxWidth: "1500px", height: "92vh", backgroundColor: "white", borderRadius: "16px", boxShadow: "0 8px 48px rgba(0,0,0,0.12)", display: "flex", overflow: "hidden", margin: "20px" }}>
         
-        {/* LEFT SIDEBAR */}
         <div style={{ width: "420px", minWidth: "420px", display: "flex", flexDirection: "column", borderRight: `1px solid ${BORDER}`, backgroundColor: "#fff", zIndex: 10 }}>
           <div style={{ padding: "20px 24px 0 24px", borderBottom: `1px solid ${BORDER}` }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
@@ -143,11 +150,32 @@ export default function EleXApp() {
           </div>
 
           <div style={{ padding: "16px 20px", borderBottom: `1px solid ${BORDER}`, minHeight: "80px", maxHeight: activeTab === "สิ่งอำนวยฯ" || activeTab === "หัวจ่าย" ? "240px" : "150px", overflowY: "auto" }}>
+            
+            {/* --- แก้ไขเฉพาะจุดนี้: เปลี่ยนสีปุ่มสถานีชาร์จ --- */}
             {activeTab === "สถานีชาร์จ" && (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                {[{ label: "เปิดให้บริการ", active: true }, { label: "ไม่มีเครื่องว่าง", active: true }, { label: "ปิดบริการ", active: true }, { label: "ส่วนบุคคล", active: false }].map((item) => (
-                  <button key={item.label} style={{ padding: "9px 12px", backgroundColor: item.active ? YELLOW : "#fff", border: item.active ? `1px solid ${YELLOW}` : `1px solid ${BORDER}`, borderRadius: "25px", fontSize: "12px", fontWeight: item.active ? 700 : 400, cursor: "pointer", color: item.active ? DARK : "#888" }}>{item.label}</button>
-                ))}
+                {[{ label: "เปิดให้บริการ" }, { label: "ไม่มีเครื่องว่าง" }, { label: "ปิดบริการ" }, { label: "ส่วนบุคคล" }].map((item) => {
+                  const isActive = statusFilters.includes(item.label);
+                  return (
+                    <button 
+                      key={item.label} 
+                      onClick={() => toggleStatusFilter(item.label)}
+                      style={{ 
+                        padding: "9px 12px", 
+                        backgroundColor: isActive ? YELLOW : "#fff", 
+                        border: isActive ? `1px solid ${YELLOW}` : `1px solid ${BORDER}`, 
+                        borderRadius: "25px", 
+                        fontSize: "12px", 
+                        fontWeight: isActive ? 700 : 400, 
+                        cursor: "pointer", 
+                        color: isActive ? DARK : "#888",
+                        transition: "0.15s"
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
               </div>
             )}
             
@@ -158,21 +186,10 @@ export default function EleXApp() {
                   {powerFilters.length > 0 && <button onClick={() => setPowerFilters([])} style={{ padding: "4px 8px", borderRadius: "15px", border: "1px solid #ffcdd2", backgroundColor: "#ffebee", fontSize: "10px", color: "#d32f2f", cursor: "pointer", fontWeight: 600 }}>✕ ล้าง ({powerFilters.length})</button>}
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "7px" }}>
-                  {[ 
-                    { kw: 22, label: "22 kW (AC)" }, 
-                    { kw: 50, label: "50 kW (DC)" }, 
-                    { kw: 90, label: "90 kW (DC)" }, 
-                    { kw: 120, label: "120 kW (DC)" }, 
-                    { kw: 125, label: "125 kW (DC)" }, 
-                    { kw: 150, label: "150 kW (DC)" }
-                  ].map(({ kw, label }) => {
+                  {[ { kw: 22, label: "22 kW (AC)" }, { kw: 50, label: "50 kW (DC)" }, { kw: 90, label: "90 kW (DC)" }, { kw: 120, label: "120 kW (DC)" }, { kw: 125, label: "125 kW (DC)" }, { kw: 150, label: "150 kW (DC)" } ].map(({ kw, label }) => {
                     const active = powerFilters.includes(kw);
                     return (
-                      <button 
-                        key={kw} 
-                        onClick={() => togglePowerFilter(kw)} 
-                        style={{ padding: "7px 10px", borderRadius: "20px", fontSize: "12px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: active ? YELLOW : "#fff", border: `1.5px solid ${active ? "#ffd500" : BORDER}`, fontWeight: active ? 700 : 400, color: active ? DARK : "#666", transition: "0.15s" }}
-                      >
+                      <button key={kw} onClick={() => togglePowerFilter(kw)} style={{ padding: "7px 10px", borderRadius: "20px", fontSize: "12px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: active ? YELLOW : "#fff", border: `1.5px solid ${active ? "#ffd500" : BORDER}`, fontWeight: active ? 700 : 400, color: active ? DARK : "#666", transition: "0.15s" }}>
                         <span> {label}</span>
                         {active && <span style={{ fontSize: "10px" }}>✓</span>}
                       </button>
@@ -217,7 +234,7 @@ export default function EleXApp() {
             
             {activeTab === "เครือข่าย" && (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                {[ { name: "EleX by EGAT", count: "60 สถานี" }, { name: "BackEN EV", count: "40 สถานี" }, { name: "PEA VOLTA", count: "30 สถานี" } ].map((net) => (
+                {[ { name: "EleX by EGAT" }, { name: "BackEN EV" }, { name: "PEA VOLTA" } ].map((net) => (
                   <div key={net.name} style={{ padding: "12px 10px", backgroundColor: "#f0f0f0", borderRadius: "10px", cursor: "default", border: `1px solid #d8d8d8` }}><div style={{ fontWeight: 700, fontSize: "13px", color: "#666" }}>{net.name}</div></div>
                 ))}
               </div>
@@ -233,7 +250,6 @@ export default function EleXApp() {
           </div>
         </div>
 
-        {/* RIGHT MAP */}
         <div style={{ flex: 1, position: "relative" }}>
           <MapView center={mapCenter} zoom={mapZoom} currentLocation={currentLocation} stations={filteredStations} selectedStation={selectedStation} radiusKm={radiusKm} routeCoordinates={routeInfo?.coordinates} onSelectStation={handleSelectStation} />
           
@@ -262,8 +278,6 @@ function StationCard({ station, isSelected, onSelect, routeInfo, routeLoading, o
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
         <div style={{ flex: 1, paddingRight: "12px" }}>
           <h3 style={{ margin: 0, fontSize: "14px", fontWeight: 700, color: DARK, lineHeight: "1.3" }}>{station.name}</h3>
-          
-          {/* --- จุดที่ 2: แสดง kW และ ราคา ในหน้า Card --- */}
           {station.power_kw > 0 && (
             <div style={{ fontSize: "12px", color: "#666", marginTop: "4px", fontWeight: 600, display: "flex", gap: "10px", alignItems: "center" }}>
               {station.power_kw} kW
@@ -274,7 +288,6 @@ function StationCard({ station, isSelected, onSelect, routeInfo, routeLoading, o
               )}
             </div>
           )}
-          
           <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "#888", lineHeight: "1.4" }}>{station.address}</p>
         </div>
         <div style={{ textAlign: "center", minWidth: "60px" }}>
@@ -286,15 +299,12 @@ function StationCard({ station, isSelected, onSelect, routeInfo, routeLoading, o
       
       {isSelected && (
         <div style={{ marginTop: "10px", padding: "12px", backgroundColor: "white", borderRadius: "10px", border: `1px solid ${BORDER}` }}>
-          
-          {/* --- จุดที่ 3: แถบราคาแบบเน้น ในหน้าต่างรายละเอียด (isSelected) --- */}
           {station.price && (
             <div style={{ marginBottom: "12px", padding: "10px", background: "#f9f9f9", borderRadius: "8px", display: "flex", justifyContent: "space-between", alignItems: "center", borderLeft: "4px solid #00a651" }}>
               <span style={{ fontSize: "11px", fontWeight: 700, color: "#888" }}>อัตราค่าบริการ</span>
               <span style={{ fontSize: "14px", fontWeight: 800, color: "#00a651" }}>{station.price}</span>
             </div>
           )}
-
           {routeLoading ? <div style={{ fontSize: "12px", color: "#aaa", textAlign: "center", padding: "8px" }}>กำลังคำนวณเส้นทาง...</div> : routeInfo ? (
             <div style={{ display: "flex", gap: "16px", marginBottom: "12px", padding: "10px 0", borderBottom: `1px solid ${BORDER}` }}>
               <div style={{ textAlign: "center", flex: 1 }}><div style={{ fontSize: "18px", fontWeight: 900, color: DARK }}>{routeInfo.distance_text || `${routeInfo.distance_km} กม.`}</div><div style={{ fontSize: "10px", color: "#999" }}>ระยะทาง</div></div><div style={{ width: "1px", backgroundColor: BORDER }} />
