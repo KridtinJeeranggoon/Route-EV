@@ -34,7 +34,7 @@ class AmenityQuery(BaseModel):
 
 # ===== Load Station CSV =====
 def load_stations_from_csv():
-    file_path = "./data/egat-data.csv"
+    file_path = r"/Users/apcy/Downloads/Route-EV/data/egat-data.csv"
     try:
         df = pd.read_csv(file_path, encoding="utf-8-sig")
         df.columns = df.columns.str.strip()
@@ -167,6 +167,7 @@ async def find_nearby_stations(query: LocationQuery):
                     "lat": s_lat, "lng": s_lng, "type": charge_type,
                     "connectors": "", 
                     "power_kw": extracted_power, 
+                    "price": "7.5 บาท/หน่วย", 
                     "network": str(s.get("ชื่อโอเปอเรเตอร์", "EleX by EGAT")),
                     "time": time_str, "distance_km": round(dist, 2),
                     "amenities": {

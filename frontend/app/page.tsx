@@ -11,10 +11,10 @@ const MapView = dynamic(() => import("./MapView"), {
 const FALLBACK_LOCATION = { lat: 14.015, lng: 100.725 };
 const API_BASE = "http://localhost:8000";
 
-interface Station { id: string; name: string; lat: number; lng: number; type: string; address: string; connectors: string; power_kw: number; network: string; time: string; distance_km: number; amenities?: any; }
+// --- จุดที่ 1: เพิ่ม price ใน Interface ---
+interface Station { id: string; name: string; lat: number; lng: number; type: string; address: string; connectors: string; power_kw: number; price?: string; network: string; time: string; distance_km: number; amenities?: any; }
 interface RouteInfo { distance_km: number; distance_text?: string; duration_min: number; duration_text?: string; coordinates?: [number, number][]; }
 
-// 🔌 นำรายการโลโก้หัวชาร์จกลับมาแล้วครับ!
 const CONNECTOR_LOGOS: Record<string, string> = {
   "Type 2": "/image/charge-head-type2.png", "CCS2": "/image/charge-head-CCS2.png", "CHAdeMO": "/image/charge-head-chademo.png",
   "Three Phase": "/image/charge-head-three-phase.png", "Type 1": "/image/charge-head-type1.png", "GB/T-DC": "/image/charge-head-GB-T-DC.png",
@@ -95,7 +95,11 @@ export default function EleXApp() {
 
   const filteredStations = stations.filter((s) => {
     const q = searchQuery.toLowerCase();
-    const matchSearch = s.name.toLowerCase().includes(q) || s.address.toLowerCase().includes(q) || s.network.toLowerCase().includes(q) || s.connectors.toLowerCase().includes(q);
+    const matchSearch = 
+  (s.name?.toLowerCase() || "").includes(q) || 
+  (s.address?.toLowerCase() || "").includes(q) || 
+  (s.network?.toLowerCase() || "").includes(q) || 
+  (s.connectors?.toLowerCase() || "").includes(q);
     const stationPower = s.power_kw || 0;
     let matchPower = true;
     if (powerFilters.length > 0) {
@@ -131,7 +135,6 @@ export default function EleXApp() {
               {searchQuery && <span onClick={() => setSearchQuery("")} style={{ position: "absolute", right: "14px", top: "11px", color: "#aaa", cursor: "pointer", fontSize: "16px" }}>✕</span>}
             </div>
             
-            {/* นำแท็บ "หัวจ่าย" กลับมาแล้ว */}
             <div style={{ display: "flex", gap: "2px" }}>
               {["สถานีชาร์จ", "กำลังไฟ", "หัวจ่าย", "สิ่งอำนวยฯ", "เครือข่าย"].map((tab) => (
                 <div key={tab} onClick={() => setActiveTab(tab)} style={{ flex: 1, textAlign: "center", padding: "10px 0", fontSize: "12px", cursor: "pointer", color: activeTab === tab ? DARK : "#999", fontWeight: activeTab === tab ? 700 : 400, borderBottom: activeTab === tab ? `3px solid ${YELLOW}` : "3px solid transparent", transition: "0.2s", whiteSpace: "nowrap" }}>{tab}</div>
@@ -179,7 +182,6 @@ export default function EleXApp() {
               </div>
             )}
 
-            {/* เพิ่มหน้าต่างสำหรับเลือกหัวชาร์จ */}
             {activeTab === "หัวจ่าย" && (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
                 {Object.keys(CONNECTOR_LOGOS).map((type) => {
@@ -260,11 +262,19 @@ function StationCard({ station, isSelected, onSelect, routeInfo, routeLoading, o
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
         <div style={{ flex: 1, paddingRight: "12px" }}>
           <h3 style={{ margin: 0, fontSize: "14px", fontWeight: 700, color: DARK, lineHeight: "1.3" }}>{station.name}</h3>
+          
+          {/* --- จุดที่ 2: แสดง kW และ ราคา ในหน้า Card --- */}
           {station.power_kw > 0 && (
-            <div style={{ fontSize: "12px", color: "#666", marginTop: "4px", fontWeight: 600 }}>
+            <div style={{ fontSize: "12px", color: "#666", marginTop: "4px", fontWeight: 600, display: "flex", gap: "10px", alignItems: "center" }}>
               {station.power_kw} kW
+              {station.price && (
+                <span style={{ fontSize: "11px", color: "#00a651", fontWeight: 700, backgroundColor: "#e8f5e9", padding: "1px 8px", borderRadius: "4px" }}>
+                  {station.price}
+                </span>
+              )}
             </div>
           )}
+          
           <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "#888", lineHeight: "1.4" }}>{station.address}</p>
         </div>
         <div style={{ textAlign: "center", minWidth: "60px" }}>
@@ -276,6 +286,15 @@ function StationCard({ station, isSelected, onSelect, routeInfo, routeLoading, o
       
       {isSelected && (
         <div style={{ marginTop: "10px", padding: "12px", backgroundColor: "white", borderRadius: "10px", border: `1px solid ${BORDER}` }}>
+          
+          {/* --- จุดที่ 3: แถบราคาแบบเน้น ในหน้าต่างรายละเอียด (isSelected) --- */}
+          {station.price && (
+            <div style={{ marginBottom: "12px", padding: "10px", background: "#f9f9f9", borderRadius: "8px", display: "flex", justifyContent: "space-between", alignItems: "center", borderLeft: "4px solid #00a651" }}>
+              <span style={{ fontSize: "11px", fontWeight: 700, color: "#888" }}>อัตราค่าบริการ</span>
+              <span style={{ fontSize: "14px", fontWeight: 800, color: "#00a651" }}>{station.price}</span>
+            </div>
+          )}
+
           {routeLoading ? <div style={{ fontSize: "12px", color: "#aaa", textAlign: "center", padding: "8px" }}>กำลังคำนวณเส้นทาง...</div> : routeInfo ? (
             <div style={{ display: "flex", gap: "16px", marginBottom: "12px", padding: "10px 0", borderBottom: `1px solid ${BORDER}` }}>
               <div style={{ textAlign: "center", flex: 1 }}><div style={{ fontSize: "18px", fontWeight: 900, color: DARK }}>{routeInfo.distance_text || `${routeInfo.distance_km} กม.`}</div><div style={{ fontSize: "10px", color: "#999" }}>ระยะทาง</div></div><div style={{ width: "1px", backgroundColor: BORDER }} />
