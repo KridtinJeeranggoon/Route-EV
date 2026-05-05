@@ -95,6 +95,7 @@ async def fetch_amenities(lat: float, lng: float, radius_m: int = 500):
     }
 
     try:
+        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post("https://overpass-api.de/api/interpreter", data={"data": overpass_query})
             if resp.status_code == 200:

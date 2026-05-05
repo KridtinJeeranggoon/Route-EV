@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 // @ts-ignore
-import "leaflet/dist/leaflet.css";
+import "leaflet/dist/leaflet.css"; //ชื่อ free map
 
 interface Station { id: string; name: string; lat: number; lng: number; type: string; address: string; connectors: string; power_kw: number; network: string; time: string; distance_km: number; amenities?: any; }
 
@@ -83,6 +83,7 @@ export default function MapView({ center, zoom, currentLocation, stations, selec
     if (!mapRef.current || !routeGroupRef.current) return;
     routeGroupRef.current.clearLayers();
     if (routeCoordinates && routeCoordinates.length > 0) {
+      console.log(" [DEBUG] routeCoordinates:", routeCoordinates);
       const polyline = L.polyline(routeCoordinates, { color: "#ffd500", weight: 6, opacity: 0.9, lineCap: "round" }).addTo(routeGroupRef.current);
       mapRef.current.fitBounds(polyline.getBounds(), { padding: [50, 50] });
     }
