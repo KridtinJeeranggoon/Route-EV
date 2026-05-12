@@ -56,3 +56,9 @@ npm run dev
 pip install -r requirements.txt
 cd backend
 uvicorn main:app --reload
+
+---
+
+## 🔑 Environment Variables
+Create a .env file
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_api_key
