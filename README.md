@@ -2,6 +2,9 @@
 
 A full-stack EV trip planning application developed for EGAT, designed to help users locate EV charging stations and nearby facilities using real-time location-based services.
 
+<img src="/images/home-screen.png" width="500" alt="Screenshot 2026-05-12 162249">
+<img width="1918" height="967" alt="Screenshot 2026-05-12 162249" src="https://github.com/user-attachments/assets/5247902e-80f5-4f0a-800e-1fe1913e4e88" />
+
 ---
 
 ## 🚀 Features
