@@ -56,5 +56,3 @@ npm run dev
 pip install -r requirements.txt
 cd backend
 uvicorn main:app --reload
-
-<img width="1918" height="967" alt="image" src="https://github.com/user-attachments/assets/8d0d57b3-57f8-4236-90b2-f911b18d87f3" />
